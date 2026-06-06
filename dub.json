@@ -1,0 +1,9 @@
+{
+    "description": "A minimal D application.",
+    "license": "proprietary",
+    "authors": [
+        "sahan"
+    ],
+    "copyright": "Copyright © 2026, sahan",
+    "name": "laplacian_pyramid"
+}

@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/laplacian_pyramid
+laplacian_pyramid.so
+laplacian_pyramid.dylib
+laplacian_pyramid.dll
+liblaplacian_pyramid.a
+laplacian_pyramid.a
+laplacian_pyramid.lib
+laplacian_pyramid-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
