@@ -1,5 +1,6 @@
 import std.algorithm;
 import std.exception;
+import std.functional : toDelegate;
 import std.math;
 import std.range;
 import std.stdio;
@@ -50,9 +51,9 @@ Image toImage(Slice!(float*, 3, Contiguous) mat) {
         auto pixel = slice!float(3);
         foreach (x; 0 .. dims.width) {
             // XXX Inverse of encode convention
-            pixel []= (mat[x, y] * 255.999);
+            pixel []= (mat[x, y] * 255);
             foreach (i; 0 .. 3) {
-                image.pixel(x, y)[i] = cast(ubyte) pixel[i];
+                image.pixel(x, y)[i] = cast(ubyte) clamp(pixel[i], 0f, 255f);
             }
         }
     }
@@ -144,6 +145,23 @@ MirImage subtract(MirImage base, MirImage valToSubtract) {
     return outImage;
 }
 
+alias BlendFunc = float delegate(float x, float y);
+
+MirImage performBlend(MirImage a, MirImage b, BlendFunc f) {
+    enforce(a.dims == b.dims);
+    auto dims = a.dims;
+    auto outImage = dims.mirImage;
+    foreach (y; std.range.iota(0, dims.height)) {
+        foreach (x; 0 .. dims.width) {
+            auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
+            auto b0 = 1 - b1;
+            enforce(abs((b0 + b1) - 1) < 1e-5);
+            outImage[x, y][] = b0 * a[x, y] + b1 * b[x, y];
+        }
+    }
+    return outImage;
+}
+
 struct LaplacianPyramid {
     MirImage[] levels; // Index 0 is the lowest res as a delta from pitch black, the rest are deltas from the previous
 }
@@ -173,19 +191,28 @@ MirImage reconstruct(LaplacianPyramid pyramid) {
     return outImage;
 }
 
-alias BlendFunc = float delegate(float x, float y);
-
 LaplacianPyramid blend(LaplacianPyramid pyr1, LaplacianPyramid pyr2) {
     enforce(pyr1.levels.length == pyr2.levels.length);
-    // TODO
-    return LaplacianPyramid();
+    enforce(pyr1.levels[$ - 1].dims == pyr2.levels[$ - 1].dims);
+    auto blendFunc = (float x, float y) {
+        return clamp(5 * x - 2f, 0f, 1f);
+        // return x > 0.5 ? 1f : 0f;
+        // size_t xGrid = cast(size_t) (x * 12);
+        // size_t yGrid = cast(size_t) (y * 12);
+        // return cast(float) ((xGrid ^ yGrid) & 1);
+    };
+    auto outPyr = LaplacianPyramid();
+    foreach (i; 0 .. pyr1.levels.length) {
+        outPyr.levels ~= performBlend(pyr1.levels[i], pyr2.levels[i], blendFunc.toDelegate);
+    }
+    return outPyr;
 }
 
 Image blend(Image im1, Image im2, int nLevels = 6) {
     enforce(im1.width == im2.width && im1.height == im2.height);
     auto pyr1 = im1.toMirImage.makePyramid(nLevels);
     auto pyr2 = im2.toMirImage.makePyramid(nLevels);
-    auto blended = blend(pyr1, pyr1);
+    auto blended = blend(pyr1, pyr2);
     return blended.reconstruct.toImage;
 }
 
@@ -193,8 +220,5 @@ void main(string[] args) {
     enforce(args.length == 3);
     auto im1 = args[1].loadImageRgb;
     auto im2 = args[2].loadImageRgb;
-    // blend(im1, im2).writeImageRgb("out.bmp");
-    auto pyr = im1.toMirImage.makePyramid(6);
-    pyr.levels[0].toImage.writeImageRgb("base.bmp");
-    pyr.reconstruct.toImage.writeImageRgb("out.bmp");
+    blend(im1, im2, 1).writeImageRgb("out.bmp");
 }
