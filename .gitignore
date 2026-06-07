@@ -17,3 +17,5 @@ laplacian_pyramid-test-*
 *.lst
 *.png
 *.bmp
+perf.data
+perf.data.old
