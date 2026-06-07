@@ -1,6 +1,5 @@
 import std.algorithm;
 import std.exception;
-import std.functional : toDelegate;
 import std.parallelism;
 import std.math;
 import std.range;
@@ -12,6 +11,9 @@ import simple_image;
 struct Dims {
     size_t width, height;
 }
+
+// Note that convention is [x, y, channel], which means y is the minor step.
+alias MirImage = Slice!(float*, 3, Contiguous);
 
 float[2] coordsToO1(float[2] c, Dims dims) => [c[0] / (dims.width - 1), c[1] / (dims.height - 1)];
 float[2] coordsFromO1(float[2] c, Dims dims) => [c[0] * (dims.width - 1), c[1] * (dims.height - 1)];
@@ -28,12 +30,12 @@ MirImage mirImage(in Dims dims) => slice!float(dims.width, dims.height, 3);
 size_t width(in ref MirImage im) => im.length!0;
 size_t height(in ref MirImage im) => im.length!1;
 
-alias MirImage = Slice!(float*, 3, Contiguous);
-
 float[3] pack(Slice!(float*, 1, Contiguous) slice) {
     enforce(slice.length == 3);
     return [slice[0], slice[1], slice[2]];
 }
+
+float avg(float[3] vals) => (vals[0] + vals[1] + vals[2]) / 3;
 
 // https://stackoverflow.com/questions/61138110/what-is-the-correct-gamma-correction-function
 float srgbFromLinear(float theLinearValue) {
@@ -50,6 +52,7 @@ float linearFromSrgb(float thesRGBValue) {
 MirImage toMirImage(Image im) {
     auto dims = im.dims;
     auto matrix = dims.mirImage;
+    // Image stride is opposite of matrix stride. Technically iterating by z order would be the best
     foreach (y; std.range.iota(0, dims.height).parallel) {
         foreach (x; 0 .. dims.width) {
             auto pix = im.pixel(x, y);
@@ -113,8 +116,8 @@ float[3] bilerp(in MirImage mat, float x, float y) {
 
 MirImage makeImage(alias genPixel)(Dims dims) {
     auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height).parallel) {
-        foreach (x; 0 .. dims.width) {
+    foreach (x; std.range.iota(0, dims.width).parallel) {
+        foreach (y; 0 .. dims.height) {
             outImage[x, y][] = genPixel(x, y);
         }
     }
@@ -161,13 +164,12 @@ MirImage subtract(MirImage base, MirImage valToSubtract) {
     });
 }
 
-alias BlendFunc = float delegate(float x, float y);
-
-MirImage performBlend(MirImage a, MirImage b, BlendFunc f) {
+MirImage performBlend(MirImage a, MirImage b, MirImage blend) {
     enforce(a.dims == b.dims);
     auto dims = a.dims;
     return dims.makeImage!((x, y) {
-        auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
+        // auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
+        auto b1 = blend[x, y].pack.avg;
         auto b0 = 1 - b1;
         enforce(abs((b0 + b1) - 1) < 1e-5);
         float[3] v;
@@ -207,17 +209,22 @@ MirImage reconstruct(LaplacianPyramid pyramid) {
 
 LaplacianPyramid blend(LaplacianPyramid pyr1, LaplacianPyramid pyr2) {
     enforce(pyr1.levels.length == pyr2.levels.length);
+    auto levels = pyr1.levels.length;
     enforce(pyr1.levels[$ - 1].dims == pyr2.levels[$ - 1].dims);
-    auto blendFunc = (float x, float y) {
+    auto dims = pyr1.levels[$ - 1].dims;
+    auto blendMask = dims.makeImage!((x, y) {
         // return clamp(5 * x - 2f, 0f, 1f);
         // return x > 0.5 ? 1f : 0f;
-        size_t xGrid = cast(size_t) (x * 12);
-        size_t yGrid = cast(size_t) (y * 12);
-        return cast(float) ((xGrid ^ yGrid) & 1);
-    };
+        size_t xGrid = cast(size_t) ((x / cast(float) dims.width) * 8);
+        size_t yGrid = cast(size_t) ((y / cast(float) dims.height) * 8);
+        float[3] pixel;
+        pixel []= cast(float) ((xGrid ^ yGrid) & 1);
+        return pixel;
+    });
+    auto blendPyr = blendMask.makePyramid(cast(int) levels);
     auto outPyr = LaplacianPyramid();
     foreach (i; 0 .. pyr1.levels.length) {
-        outPyr.levels ~= performBlend(pyr1.levels[i], pyr2.levels[i], blendFunc.toDelegate);
+        outPyr.levels ~= performBlend(pyr1.levels[i], pyr2.levels[i], blendPyr.levels[i]);
     }
     return outPyr;
 }
