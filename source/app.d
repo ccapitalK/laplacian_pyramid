@@ -1,6 +1,7 @@
 import std.algorithm;
 import std.exception;
 import std.functional : toDelegate;
+import std.parallelism;
 import std.math;
 import std.range;
 import std.stdio;
@@ -34,7 +35,7 @@ Slice!(float*, 3, Contiguous) toMirImage(Image im) {
     // TODO: Double check the pitch/stride?
     auto dims = im.dims;
     auto matrix = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height)) {
+    foreach (y; std.range.iota(0, dims.height).parallel) {
         foreach (x; 0 .. dims.width) {
             // XXX Choose a convention here and stick with it
             matrix[x, y] [] = im.pixel(x, y);
@@ -47,7 +48,7 @@ Slice!(float*, 3, Contiguous) toMirImage(Image im) {
 Image toImage(Slice!(float*, 3, Contiguous) mat) {
     auto dims = mat.dims;
     auto image = dims.image;
-    foreach (y; std.range.iota(0, dims.height)) {
+    foreach (y; std.range.iota(0, dims.height).parallel) {
         auto pixel = slice!float(3);
         foreach (x; 0 .. dims.width) {
             // XXX Inverse of encode convention
@@ -86,7 +87,10 @@ float[3] bilerp(in MirImage mat, float x, float y) {
                 writefln!"%s %s %s"(dims, xP, yP);
             }
             enforce(xP.index < dims.width && yP.index < dims.height);
-            float[3] texel = mat[xP.index, yP.index].array[];
+            float[3] texel;
+            foreach (i; 0 .. 3) {
+                texel[i] = mat[xP.index, yP.index, i];
+            }
             v[] += texel[] * weight;
         }
     }
@@ -99,7 +103,7 @@ MirImage downscale2(in MirImage image) {
     enforce(dims.width > 1 && dims.height > 1);
     auto halfDims = Dims(dims.width / 2, dims.height / 2);
     auto outImage = halfDims.mirImage;
-    foreach (y; std.range.iota(0, halfDims.height)) {
+    foreach (y; std.range.iota(0, halfDims.height).parallel) {
         foreach (x; 0 .. halfDims.width) {
             auto c = vec2(x, y).coordsToO1(halfDims).coordsFromO1(dims);
             outImage[x, y][] = image.bilerp(c[0], c[1]);
@@ -112,7 +116,7 @@ MirImage downscale2(in MirImage image) {
 MirImage upscale2(in MirImage image, Dims outDims) {
     auto dims = image.dims;
     auto outImage = outDims.mirImage;
-    foreach (y; std.range.iota(0, outDims.height)) {
+    foreach (y; std.range.iota(0, outDims.height).parallel) {
         foreach (x; 0 .. outDims.width) {
             auto c = vec2(x, y).coordsToO1(outDims).coordsFromO1(dims);
             outImage[x, y][] = image.bilerp(c[0], c[1]);
@@ -125,7 +129,7 @@ MirImage add(MirImage a, MirImage b) {
     enforce(a.dims == b.dims);
     auto dims = a.dims;
     auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height)) {
+    foreach (y; std.range.iota(0, dims.height).parallel) {
         foreach (x; 0 .. dims.width) {
             outImage[x, y][] = a[x, y] + b[x, y];
         }
@@ -137,7 +141,7 @@ MirImage subtract(MirImage base, MirImage valToSubtract) {
     enforce(base.dims == valToSubtract.dims);
     auto dims = base.dims;
     auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height)) {
+    foreach (y; std.range.iota(0, dims.height).parallel) {
         foreach (x; 0 .. dims.width) {
             outImage[x, y][] = base[x, y] - valToSubtract[x, y];
         }
@@ -151,7 +155,7 @@ MirImage performBlend(MirImage a, MirImage b, BlendFunc f) {
     enforce(a.dims == b.dims);
     auto dims = a.dims;
     auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height)) {
+    foreach (y; std.range.iota(0, dims.height).parallel) {
         foreach (x; 0 .. dims.width) {
             auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
             auto b0 = 1 - b1;
