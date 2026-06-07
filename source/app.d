@@ -1,4 +1,5 @@
 import std.algorithm;
+import std.conv;
 import std.exception;
 import std.parallelism;
 import std.math;
@@ -100,9 +101,6 @@ float[3] bilerp(in MirImage mat, float x, float y) {
     foreach (xP; xS) {
         foreach (yP; yS) {
             float weight = xP.weight * yP.weight;
-            if (!(xP.index < dims.width && yP.index < dims.height)) {
-                writefln!"%s %s %s"(dims, xP, yP);
-            }
             enforce(xP.index < dims.width && yP.index < dims.height);
             float[3] texel;
             foreach (i; 0 .. 3) {
@@ -165,24 +163,26 @@ MirImage subtract(MirImage base, MirImage valToSubtract) {
 }
 
 MirImage performBlend(MirImage a, MirImage b, MirImage blend) {
-    enforce(a.dims == b.dims);
+    enforce(a.dims == b.dims && a.dims == blend.dims);
     auto dims = a.dims;
-    return dims.makeImage!((x, y) {
+    auto im = dims.makeImage!((x, y) {
         // auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
-        auto b1 = blend[x, y].pack.avg;
-        auto b0 = 1 - b1;
+        float b1 = blend[x, y].pack.avg.clamp(0f, 1f);
+        float b0 = 1 - b1;
         enforce(abs((b0 + b1) - 1) < 1e-5);
         float[3] v;
         v []= b0 * a[x, y].pack[] + b1 * b[x, y].pack[];
         return v;
     });
+    return im;
 }
 
 struct LaplacianPyramid {
     MirImage[] levels; // Index 0 is the lowest res as a delta from pitch black, the rest are deltas from the previous
 }
 
-LaplacianPyramid makePyramid(MirImage image, int levels) {
+// Note: As a hack, we also encode the blend mask mipmaps as a LaplacianPyramid, for that one we don't take the delta
+LaplacianPyramid makePyramid(MirImage image, int levels, bool takeDelta=true) {
     auto minSize = 4 << levels;
     enforce(image.dims.width >= minSize && image.dims.height >= minSize);
     LaplacianPyramid pyramid;
@@ -190,9 +190,13 @@ LaplacianPyramid makePyramid(MirImage image, int levels) {
     foreach (i; 1 .. levels) {
         auto last = pyramid.levels[$ - 1];
         auto half = last.downscale2;
-        auto rec = half.upscale2(last.dims);
-        pyramid.levels[$ - 1] = last.subtract(rec);
-        pyramid.levels ~= half;
+        if (takeDelta) {
+            auto rec = half.upscale2(last.dims);
+            pyramid.levels[$ - 1] = last.subtract(rec);
+            pyramid.levels ~= half;
+        } else {
+            pyramid.levels ~= half;
+        }
     }
     pyramid.levels.reverse();
     return pyramid;
@@ -212,16 +216,18 @@ LaplacianPyramid blend(LaplacianPyramid pyr1, LaplacianPyramid pyr2) {
     auto levels = pyr1.levels.length;
     enforce(pyr1.levels[$ - 1].dims == pyr2.levels[$ - 1].dims);
     auto dims = pyr1.levels[$ - 1].dims;
-    auto blendMask = dims.makeImage!((x, y) {
-        // return clamp(5 * x - 2f, 0f, 1f);
-        // return x > 0.5 ? 1f : 0f;
-        size_t xGrid = cast(size_t) ((x / cast(float) dims.width) * 8);
-        size_t yGrid = cast(size_t) ((y / cast(float) dims.height) * 8);
-        float[3] pixel;
-        pixel []= cast(float) ((xGrid ^ yGrid) & 1);
+    auto blendMask = dims.makeImage!((xN, yN) {
+        float x = xN / cast(float) dims.width;
+        float y = yN / cast(float) dims.height;
+        // size_t xGrid = cast(size_t) (xN * 8);
+        // size_t yGrid = cast(size_t) (yN * 8);
+        // float light = cast(float) ((xGrid ^ yGrid) & 1);
+        // float light = clamp(5 * x - 2f, 0f, 1f);
+        float light = x > 0.5 ? 1f : 0f;
+        float[3] pixel = [light, light, light];
         return pixel;
     });
-    auto blendPyr = blendMask.makePyramid(cast(int) levels);
+    auto blendPyr = blendMask.makePyramid(cast(int) levels, takeDelta: false);
     auto outPyr = LaplacianPyramid();
     foreach (i; 0 .. pyr1.levels.length) {
         outPyr.levels ~= performBlend(pyr1.levels[i], pyr2.levels[i], blendPyr.levels[i]);
@@ -238,8 +244,9 @@ Image blend(Image im1, Image im2, int nLevels = 6) {
 }
 
 void main(string[] args) {
-    enforce(args.length == 3);
+    enforce(args.length >= 3);
+    auto nLevels = args.length > 3 ? args[3].to!int : 6;
     auto im1 = args[1].loadImageRgb;
     auto im2 = args[2].loadImageRgb;
-    blend(im1, im2).writeImageRgb("out.bmp");
+    blend(im1, im2, nLevels).writeImageRgb("out.bmp");
 }
