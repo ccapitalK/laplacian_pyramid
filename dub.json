@@ -1,9 +1,13 @@
 {
-    "description": "A minimal D application.",
-    "license": "proprietary",
-    "authors": [
-        "sahan"
-    ],
-    "copyright": "Copyright © 2026, sahan",
-    "name": "laplacian_pyramid"
+	"description": "A minimal D application.",
+	"dependencies": {
+		"simple-image": "~>0.2.0",
+		"mir-algorithm": "~>3.22.4"
+	},
+	"authors": [
+		"sahan"
+	],
+	"copyright": "Copyright © 2026, sahan",
+	"license": "proprietary",
+	"name": "laplacian_pyramid"
 }

@@ -15,3 +15,5 @@ laplacian_pyramid-test-*
 *.o
 *.obj
 *.lst
+*.png
+*.bmp
