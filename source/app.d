@@ -20,7 +20,7 @@ float[2] vec2(size_t x, size_t y) => [cast(float) x, cast(float) y];
 float[2] vec2(float x, float y) => [x, y];
 
 Dims dims(in ref Image im) => Dims(im.width, im.height);
-Dims dims(in ref MirImage im) => Dims(im.length!0, im.length!1);
+Dims dims(in ref MirImage im) => Dims(im.width, im.height);
 
 Image image(in Dims dims) => Image(dims.width, dims.height);
 MirImage mirImage(in Dims dims) => slice!float(dims.width, dims.height, 3);
@@ -30,7 +30,7 @@ size_t height(in ref MirImage im) => im.length!1;
 
 alias MirImage = Slice!(float*, 3, Contiguous);
 
-Slice!(float*, 3, Contiguous) toMirImage(Image im) {
+MirImage toMirImage(Image im) {
     // TODO: SRGBify this
     // TODO: Double check the pitch/stride?
     auto dims = im.dims;
@@ -45,7 +45,7 @@ Slice!(float*, 3, Contiguous) toMirImage(Image im) {
     return matrix;
 }
 
-Image toImage(Slice!(float*, 3, Contiguous) mat) {
+Image toImage(MirImage mat) {
     auto dims = mat.dims;
     auto image = dims.image;
     foreach (y; std.range.iota(0, dims.height).parallel) {
@@ -62,7 +62,7 @@ Image toImage(Slice!(float*, 3, Contiguous) mat) {
 }
 
 // Sufficient for upscaling, and for downscaling by a factor of at most 2, which is what we are doing
-// `x` should be in [0, mat.width), and `y` in [0, mat.height)
+// `x` should be in [0, mat.width - 1), and `y` in [0, mat.height - 1)
 float[3] bilerp(in MirImage mat, float x, float y) {
     auto dims = mat.dims;
     float[3] v = [0, 0, 0];
@@ -199,11 +199,11 @@ LaplacianPyramid blend(LaplacianPyramid pyr1, LaplacianPyramid pyr2) {
     enforce(pyr1.levels.length == pyr2.levels.length);
     enforce(pyr1.levels[$ - 1].dims == pyr2.levels[$ - 1].dims);
     auto blendFunc = (float x, float y) {
-        return clamp(5 * x - 2f, 0f, 1f);
+        // return clamp(5 * x - 2f, 0f, 1f);
         // return x > 0.5 ? 1f : 0f;
-        // size_t xGrid = cast(size_t) (x * 12);
-        // size_t yGrid = cast(size_t) (y * 12);
-        // return cast(float) ((xGrid ^ yGrid) & 1);
+        size_t xGrid = cast(size_t) (x * 12);
+        size_t yGrid = cast(size_t) (y * 12);
+        return cast(float) ((xGrid ^ yGrid) & 1);
     };
     auto outPyr = LaplacianPyramid();
     foreach (i; 0 .. pyr1.levels.length) {
@@ -224,5 +224,5 @@ void main(string[] args) {
     enforce(args.length == 3);
     auto im1 = args[1].loadImageRgb;
     auto im2 = args[2].loadImageRgb;
-    blend(im1, im2, 1).writeImageRgb("out.bmp");
+    blend(im1, im2).writeImageRgb("out.bmp");
 }
