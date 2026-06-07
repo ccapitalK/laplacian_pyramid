@@ -30,6 +30,11 @@ size_t height(in ref MirImage im) => im.length!1;
 
 alias MirImage = Slice!(float*, 3, Contiguous);
 
+float[3] pack(Slice!(float*, 1, Contiguous) slice) {
+    enforce(slice.length == 3);
+    return [slice[0], slice[1], slice[2]];
+}
+
 MirImage toMirImage(Image im) {
     // TODO: SRGBify this
     // TODO: Double check the pitch/stride?
@@ -97,56 +102,54 @@ float[3] bilerp(in MirImage mat, float x, float y) {
     return v;
 }
 
+MirImage makeImage(alias genPixel)(Dims dims) {
+    auto outImage = dims.mirImage;
+    foreach (y; std.range.iota(0, dims.height).parallel) {
+        foreach (x; 0 .. dims.width) {
+            outImage[x, y][] = genPixel(x, y);
+        }
+    }
+    return outImage;
+}
+
 // Halve the resolution of the image
 MirImage downscale2(in MirImage image) {
     auto dims = image.dims;
     enforce(dims.width > 1 && dims.height > 1);
     auto halfDims = Dims(dims.width / 2, dims.height / 2);
-    auto outImage = halfDims.mirImage;
-    foreach (y; std.range.iota(0, halfDims.height).parallel) {
-        foreach (x; 0 .. halfDims.width) {
-            auto c = vec2(x, y).coordsToO1(halfDims).coordsFromO1(dims);
-            outImage[x, y][] = image.bilerp(c[0], c[1]);
-        }
-    }
-    return outImage;
+    return halfDims.makeImage!((x, y) {
+        auto c = vec2(x, y).coordsToO1(halfDims).coordsFromO1(dims);
+        return image.bilerp(c[0], c[1]);
+    });
 }
 
-// Need to specify output dimensions since we lose a bit of information downscaling
+// Need to specify output dimensions since we lose a bit of information downscaling (could be 2n or 2n + 1)
 MirImage upscale2(in MirImage image, Dims outDims) {
     auto dims = image.dims;
-    auto outImage = outDims.mirImage;
-    foreach (y; std.range.iota(0, outDims.height).parallel) {
-        foreach (x; 0 .. outDims.width) {
-            auto c = vec2(x, y).coordsToO1(outDims).coordsFromO1(dims);
-            outImage[x, y][] = image.bilerp(c[0], c[1]);
-        }
-    }
-    return outImage;
+    return outDims.makeImage!((x, y) {
+        auto c = vec2(x, y).coordsToO1(outDims).coordsFromO1(dims);
+        return image.bilerp(c[0], c[1]);
+    });
 }
 
 MirImage add(MirImage a, MirImage b) {
     enforce(a.dims == b.dims);
     auto dims = a.dims;
-    auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height).parallel) {
-        foreach (x; 0 .. dims.width) {
-            outImage[x, y][] = a[x, y] + b[x, y];
-        }
-    }
-    return outImage;
+    return dims.makeImage!((x, y) {
+        float[3] v;
+        v[] = a[x, y].pack[] + b[x, y].pack[];
+        return v;
+    });
 }
 
 MirImage subtract(MirImage base, MirImage valToSubtract) {
     enforce(base.dims == valToSubtract.dims);
     auto dims = base.dims;
-    auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height).parallel) {
-        foreach (x; 0 .. dims.width) {
-            outImage[x, y][] = base[x, y] - valToSubtract[x, y];
-        }
-    }
-    return outImage;
+    return dims.makeImage!((x, y) {
+        float[3] v;
+        v[] = base[x, y].pack[] - valToSubtract[x, y].pack[];
+        return v;
+    });
 }
 
 alias BlendFunc = float delegate(float x, float y);
@@ -154,16 +157,14 @@ alias BlendFunc = float delegate(float x, float y);
 MirImage performBlend(MirImage a, MirImage b, BlendFunc f) {
     enforce(a.dims == b.dims);
     auto dims = a.dims;
-    auto outImage = dims.mirImage;
-    foreach (y; std.range.iota(0, dims.height).parallel) {
-        foreach (x; 0 .. dims.width) {
-            auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
-            auto b0 = 1 - b1;
-            enforce(abs((b0 + b1) - 1) < 1e-5);
-            outImage[x, y][] = b0 * a[x, y] + b1 * b[x, y];
-        }
-    }
-    return outImage;
+    return dims.makeImage!((x, y) {
+        auto b1 = f(x / cast(float) dims.width, y / cast(float) dims.height);
+        auto b0 = 1 - b1;
+        enforce(abs((b0 + b1) - 1) < 1e-5);
+        float[3] v;
+        v []= b0 * a[x, y].pack[] + b1 * b[x, y].pack[];
+        return v;
+    });
 }
 
 struct LaplacianPyramid {
