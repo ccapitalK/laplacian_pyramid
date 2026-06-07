@@ -181,8 +181,7 @@ struct LaplacianPyramid {
     MirImage[] levels; // Index 0 is the lowest res as a delta from pitch black, the rest are deltas from the previous
 }
 
-// Note: As a hack, we also encode the blend mask mipmaps as a LaplacianPyramid, for that one we don't take the delta
-LaplacianPyramid makePyramid(MirImage image, int levels, bool takeDelta=true) {
+LaplacianPyramid makePyramid(MirImage image, int levels) {
     auto minSize = 4 << levels;
     enforce(image.dims.width >= minSize && image.dims.height >= minSize);
     LaplacianPyramid pyramid;
@@ -190,13 +189,9 @@ LaplacianPyramid makePyramid(MirImage image, int levels, bool takeDelta=true) {
     foreach (i; 1 .. levels) {
         auto last = pyramid.levels[$ - 1];
         auto half = last.downscale2;
-        if (takeDelta) {
-            auto rec = half.upscale2(last.dims);
-            pyramid.levels[$ - 1] = last.subtract(rec);
-            pyramid.levels ~= half;
-        } else {
-            pyramid.levels ~= half;
-        }
+        auto rec = half.upscale2(last.dims);
+        pyramid.levels[$ - 1] = last.subtract(rec);
+        pyramid.levels ~= half;
     }
     pyramid.levels.reverse();
     return pyramid;
@@ -213,24 +208,19 @@ MirImage reconstruct(LaplacianPyramid pyramid) {
 
 LaplacianPyramid blend(LaplacianPyramid pyr1, LaplacianPyramid pyr2) {
     enforce(pyr1.levels.length == pyr2.levels.length);
-    auto levels = pyr1.levels.length;
     enforce(pyr1.levels[$ - 1].dims == pyr2.levels[$ - 1].dims);
-    auto dims = pyr1.levels[$ - 1].dims;
-    auto blendMask = dims.makeImage!((xN, yN) {
-        float x = xN / cast(float) dims.width;
-        float y = yN / cast(float) dims.height;
-        // size_t xGrid = cast(size_t) (xN * 8);
-        // size_t yGrid = cast(size_t) (yN * 8);
-        // float light = cast(float) ((xGrid ^ yGrid) & 1);
-        // float light = clamp(5 * x - 2f, 0f, 1f);
-        float light = x > 0.5 ? 1f : 0f;
-        float[3] pixel = [light, light, light];
-        return pixel;
-    });
-    auto blendPyr = blendMask.makePyramid(cast(int) levels, takeDelta: false);
     auto outPyr = LaplacianPyramid();
     foreach (i; 0 .. pyr1.levels.length) {
-        outPyr.levels ~= performBlend(pyr1.levels[i], pyr2.levels[i], blendPyr.levels[i]);
+        auto dims = pyr1.levels[i].dims;
+        auto blendMask = dims.makeImage!((x, y) {
+            // Lets do a swath of 3px across at each mipmap level
+            float RAD = 3;
+            float normX = (x - (.5 * dims.width) + RAD) / (2 * RAD);
+            float light = 1. - normX.clamp(0f, 1f);
+            float[3] pixel = [light, light, light];
+            return pixel;
+        });
+        outPyr.levels ~= performBlend(pyr1.levels[i], pyr2.levels[i], blendMask);
     }
     return outPyr;
 }
