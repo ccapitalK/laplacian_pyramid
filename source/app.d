@@ -13,8 +13,8 @@ struct Dims {
     size_t width, height;
 }
 
-float[2] coordsToO1(float[2] c, Dims dims) => [c[0] / dims.width, c[1] / dims.height];
-float[2] coordsFromO1(float[2] c, Dims dims) => [c[0] * dims.width, c[1] * dims.height];
+float[2] coordsToO1(float[2] c, Dims dims) => [c[0] / (dims.width - 1), c[1] / (dims.height - 1)];
+float[2] coordsFromO1(float[2] c, Dims dims) => [c[0] * (dims.width - 1), c[1] * (dims.height - 1)];
 
 float[2] vec2(size_t x, size_t y) => [cast(float) x, cast(float) y];
 float[2] vec2(float x, float y) => [x, y];
@@ -35,16 +35,28 @@ float[3] pack(Slice!(float*, 1, Contiguous) slice) {
     return [slice[0], slice[1], slice[2]];
 }
 
+// https://stackoverflow.com/questions/61138110/what-is-the-correct-gamma-correction-function
+float srgbFromLinear(float theLinearValue) {
+  return theLinearValue <= 0.0031308f
+       ? theLinearValue * 12.92f
+       : pow(theLinearValue, 1.0f/2.4f) * 1.055f - 0.055f;
+}
+float linearFromSrgb(float thesRGBValue) {
+  return thesRGBValue <= 0.04045f
+       ? thesRGBValue / 12.92f
+       : pow((thesRGBValue + 0.055f) / 1.055f, 2.4f);
+}
+
 MirImage toMirImage(Image im) {
-    // TODO: SRGBify this
-    // TODO: Double check the pitch/stride?
     auto dims = im.dims;
     auto matrix = dims.mirImage;
     foreach (y; std.range.iota(0, dims.height).parallel) {
         foreach (x; 0 .. dims.width) {
-            // XXX Choose a convention here and stick with it
-            matrix[x, y] [] = im.pixel(x, y);
-            matrix[x, y] [] /= 255.0;
+            auto pix = im.pixel(x, y);
+            auto slice = matrix[x, y];
+            foreach (i; 0 .. 3) {
+                slice[i] = linearFromSrgb(pix[i] / 255f);
+            }
         }
     }
     return matrix;
@@ -54,12 +66,11 @@ Image toImage(MirImage mat) {
     auto dims = mat.dims;
     auto image = dims.image;
     foreach (y; std.range.iota(0, dims.height).parallel) {
-        auto pixel = slice!float(3);
         foreach (x; 0 .. dims.width) {
-            // XXX Inverse of encode convention
-            pixel []= (mat[x, y] * 255);
+            auto pix = image.pixel(x, y);
+            auto slice = mat[x, y];
             foreach (i; 0 .. 3) {
-                image.pixel(x, y)[i] = cast(ubyte) clamp(pixel[i], 0f, 255f);
+                pix[i] = cast(ubyte) round(255 * slice[i].clamp(0f, 1f).srgbFromLinear);
             }
         }
     }
@@ -67,7 +78,7 @@ Image toImage(MirImage mat) {
 }
 
 // Sufficient for upscaling, and for downscaling by a factor of at most 2, which is what we are doing
-// `x` should be in [0, mat.width - 1), and `y` in [0, mat.height - 1)
+// `x` should be in [0, mat.width - 1], and `y` in [0, mat.height - 1]
 float[3] bilerp(in MirImage mat, float x, float y) {
     auto dims = mat.dims;
     float[3] v = [0, 0, 0];
@@ -80,8 +91,6 @@ float[3] bilerp(in MirImage mat, float x, float y) {
         size_t index;
         float weight;
     }
-    // FIXME: This is actually subtly off, need to rethink what pixels as samples would mean here. Range being [) has
-    // introduced error here,
     // FIXME: There is probably a more performant way of doing the clamp. We need this to avoid OOB at the edge reads
     Weight[2] xS = [Weight(xI, 1 - x), Weight(xI + 1 < dims.width ? xI + 1 : xI, x)];
     Weight[2] yS = [Weight(yI, 1 - y), Weight(yI + 1 < dims.height ? yI + 1 : yI, y)];
