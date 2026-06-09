@@ -15,7 +15,7 @@ laplacian_pyramid-test-*
 *.o
 *.obj
 *.lst
-*.png
+/*.png
 *.bmp
 perf.data
 perf.data.old
