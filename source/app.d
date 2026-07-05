@@ -38,18 +38,6 @@ float[3] pack(Slice!(float*, 1, Contiguous) slice) {
 
 float avg(float[3] vals) => (vals[0] + vals[1] + vals[2]) / 3;
 
-// https://stackoverflow.com/questions/61138110/what-is-the-correct-gamma-correction-function
-float srgbFromLinear(float theLinearValue) {
-  return theLinearValue <= 0.0031308f
-       ? theLinearValue * 12.92f
-       : pow(theLinearValue, 1.0f/2.4f) * 1.055f - 0.055f;
-}
-float linearFromSrgb(float thesRGBValue) {
-  return thesRGBValue <= 0.04045f
-       ? thesRGBValue / 12.92f
-       : pow((thesRGBValue + 0.055f) / 1.055f, 2.4f);
-}
-
 MirImage toMirImage(Image im) {
     auto dims = im.dims;
     auto matrix = dims.mirImage;
@@ -59,7 +47,7 @@ MirImage toMirImage(Image im) {
             auto pix = im.pixel(x, y);
             auto slice = matrix[x, y];
             foreach (i; 0 .. 3) {
-                slice[i] = linearFromSrgb(pix[i] / 255f);
+                slice[i] = pix[i].srgbUnormToLinearF32;
             }
         }
     }
@@ -74,7 +62,7 @@ Image toImage(MirImage mat) {
             auto pix = image.pixel(x, y);
             auto slice = mat[x, y];
             foreach (i; 0 .. 3) {
-                pix[i] = cast(ubyte) round(255 * slice[i].clamp(0f, 1f).srgbFromLinear);
+                pix[i] = slice[i].linearF32ToSrgbUnorm;
             }
         }
     }
